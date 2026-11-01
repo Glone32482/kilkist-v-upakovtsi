@@ -65,6 +65,10 @@ mark { background: var(--wu); color: var(--ink); padding: 0 3px; border-radius: 
 .drop .hint { color: var(--hero-text); }
 .drop .file-name { color: #fff; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drop .error { color: #ff9c90; }
+.cols { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.cols-label { color: var(--hero-text); font-size: 12px; margin-right: 2px; }
+.col { padding: 2px 8px; border: 1px solid var(--hero-line); border-radius: 999px; color: #fff; font-size: 12px; white-space: nowrap; }
+.col.missing { border-color: var(--bad); background: var(--bad); }
 .progress { height: 6px; border-radius: 999px; background: #3a3a3f; overflow: hidden; }
 .progress span { display: block; height: 100%; width: 0; background: var(--wu); transition: width .2s; }
 .progress.busy span { width: 35%; animation: slide 1.1s ease-in-out infinite; }
@@ -213,6 +217,7 @@ mark { background: var(--wu); color: var(--ink); padding: 0 3px; border-radius: 
         <span class="hint" id="drop-hint">Або натисніть, щоб вибрати файл .xlsx. Файл обробляється в цьому браузері й нікуди не надсилається.</span>
         <div class="progress" id="progress" hidden><span></span></div>
         <span class="error" id="drop-error" hidden></span>
+        <div class="cols"><span class="cols-label">Файл має містити стовпці:</span><span class="cols" id="cols"></span></div>
       </label>
       <div class="kpis" id="kpis">
         <button class="kpi" data-segment="all" disabled><span>Усього товарів</span><b id="k-total">—</b><small id="k-total-note">у вивантаженні</small></button>
@@ -228,7 +233,7 @@ mark { background: var(--wu); color: var(--ink); padding: 0 3px; border-radius: 
   <div class="wrap">
     <section class="empty" id="start">
       <b>Завантажте вивантаження, щоб побачити результати</b>
-      Потрібні стовпці: ID эталонного товара, Название товара, Кратность, В блистере, Количество в упаковке, Название товара DWH.
+      Перетягніть файл у зону вгорі. Там же список стовпців, які мають бути у файлі.
     </section>
 
     <section id="results" hidden>
@@ -484,6 +489,12 @@ document.addEventListener("drop", (event) => {
   openFile(event.dataTransfer.files[0]);
 });
 
+// Список обов'язкових стовпців у зоні завантаження. Відсутні у файлі — червоні.
+function markColumns(missing) {
+  $("cols").innerHTML = REQUIRED.map((name) =>
+    `<span class="col${missing.includes(name) ? " missing" : ""}">${escape(name)}</span>`).join("");
+}
+
 const nextFrame = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function setProgress(share, title, hint) {
@@ -510,6 +521,7 @@ async function openFile(file) {
     const errorBox = $("drop-error");
     errorBox.textContent = `Файл ${file.name} не відкрився: ${error.message}.`;
     errorBox.hidden = false;
+    markColumns(error.missing ?? []);
     if (state.items.length) showLoaded();
     else setProgress(0, "Перетягніть сюди вивантаження з DWH", "Або натисніть, щоб вибрати файл .xlsx.");
   } finally {
@@ -521,7 +533,10 @@ async function load(fileName, raw) {
   if (!raw.length) throw new Error("у ньому немає рядків");
   const header = raw[0].map((cell) => (cell === null ? "" : String(cell).trim()));
   const missing = REQUIRED.filter((name) => !header.includes(name));
-  if (missing.length) throw new Error(`немає стовпців ${missing.join(", ")}`);
+  if (missing.length) {
+    throw Object.assign(new Error(`у ньому немає стовпців ${missing.join(", ")}. Назви мають збігатися з вивантаженням DWH`), { missing });
+  }
+  markColumns([]);
   const at = Object.fromEntries(REQUIRED.map((name) => [name, header.indexOf(name)]));
   const rows = raw.slice(1)
     .map((row) => header.map((_, i) => row[i] ?? null))
@@ -1003,6 +1018,8 @@ function clearEdits() {
   if (state.items.length) render();
   toast("Усі правки видалено.");
 }
+
+markColumns([]);
 </script>
 </body>
 </html>
