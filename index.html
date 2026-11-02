@@ -110,6 +110,15 @@ mark { background: var(--wu); color: var(--ink); padding: 0 3px; border-radius: 
 .segments button[aria-pressed="true"] { background: var(--ink); color: #fff; }
 .segments em { font-style: normal; opacity: .65; margin-left: 4px; }
 .toolbar .spacer { flex: 1; }
+/* Групи за регламентом: як аркуші таблиці, тому вкладки, а не ще один ряд кнопок. */
+.groups { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; box-shadow: inset 0 -2px var(--line); }
+.groups button { padding: 9px 14px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--ink-2); font-weight: 600; cursor: pointer; }
+.groups button:hover { color: var(--ink); }
+.groups button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--wu); }
+.groups em { font-style: normal; font-weight: 500; color: var(--ink-3); margin-left: 6px; }
+@media (max-width: 640px) { .groups { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } .groups button { flex: none; } }
+.groups small { display: block; font-size: 11px; font-weight: 500; color: var(--ink-3); text-align: left; }
+.tag { display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 6px; background: var(--bg); color: var(--ink-2); font-size: 11px; font-weight: 600; }
 .search { width: 280px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
 .check { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-weight: 500; cursor: pointer; }
 .check input { width: 16px; height: 16px; accent-color: var(--ink); }
@@ -238,6 +247,7 @@ mark { background: var(--wu); color: var(--ink); padding: 0 3px; border-radius: 
 
     <section id="results" hidden>
       <div class="listhead">
+        <div class="groups" id="groups" role="group" aria-label="Група товарів"></div>
         <div class="toolbar">
           <div class="segments" id="segments"></div>
           <input class="search" id="search" type="search" placeholder="Пошук за ID або назвою" aria-label="Пошук">
@@ -436,10 +446,20 @@ const SEGMENTS = [
   { key: "all", label: "Усі", test: () => true },
 ];
 
+// Групи з регламенту. Набори й комплекти з №N, що не дорівнює кількості, перевірка відносить до не розпарсених.
+const GROUPS = [
+  { key: "all", label: "Усі групи", hint: "усі товари розділу" },
+  { key: LS_BAD, label: "ЛС_БАД", hint: "кількість після «№»" },
+  { key: PIECES, label: "НДС (шт.)", hint: "кількість перед «шт»" },
+  { key: PAIRS, label: "НДС (пари)", hint: "кількість перед «пар»" },
+  { key: UNPARSED, label: "Не розпарсені", hint: "кількості в назві немає" },
+];
+const GROUP_LABEL = Object.fromEntries(GROUPS.map((g) => [g.key, g.label]));
+
 // Правка за ID еталонного товару: { multiple, blister, at } або { keep: true, at }.
 const state = {
   fileName: "", header: [], at: {}, items: [], byId: new Map(), edits: loadEdits(),
-  segment: "attention", sort: { key: "status", dir: "asc" }, shown: PAGE, busy: false,
+  segment: "attention", group: "all", sort: { key: "status", dir: "asc" }, shown: PAGE, busy: false,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -588,6 +608,7 @@ const isDone = (c) => Boolean(state.edits[c.id]);
 
 function render() {
   renderKpis();
+  renderGroups();
   renderSegments();
   renderItems();
 }
@@ -609,9 +630,23 @@ function renderKpis() {
   }
 }
 
+const inGroup = (c) => state.group === "all" || c.parsed.group === state.group;
+
+// Лічильник групи — скільки її товарів у вибраному розділі.
+function renderGroups() {
+  const segment = SEGMENTS.find((s) => s.key === state.segment);
+  $("groups").innerHTML = GROUPS.map(({ key, label, hint }) => {
+    const count = state.items.filter((c) => segment.test(c) && (key === "all" || c.parsed.group === key)).length;
+    return `<button data-group="${escape(key)}" aria-pressed="${key === state.group}">${label}<em>${count.toLocaleString("uk")}</em>${hint ? `<small>${hint}</small>` : ""}</button>`;
+  }).join("");
+  // На телефоні вкладки гортаються вбік: вибрана має лишатися на виду.
+  const pressed = $("groups").querySelector('[aria-pressed="true"]');
+  $("groups").scrollLeft = pressed.offsetLeft - 16;
+}
+
 function renderSegments() {
   $("segments").innerHTML = SEGMENTS.map(({ key, label, test }) =>
-    `<button data-segment="${key}" aria-pressed="${key === state.segment}">${label}<em>${state.items.filter(test).length.toLocaleString("uk")}</em></button>`,
+    `<button data-segment="${key}" aria-pressed="${key === state.segment}">${label}<em>${state.items.filter((c) => inGroup(c) && test(c)).length.toLocaleString("uk")}</em></button>`,
   ).join("");
   for (const button of document.querySelectorAll("#colhead [data-sort]")) {
     if (button.dataset.sort === state.sort.key) button.dataset.dir = state.sort.dir;
@@ -623,7 +658,7 @@ function visibleItems() {
   const query = $("search").value.trim().toLowerCase();
   const hideDone = $("hide-done").checked;
   const segment = SEGMENTS.find((s) => s.key === state.segment);
-  const list = state.items.filter((c) => segment.test(c)
+  const list = state.items.filter((c) => segment.test(c) && inGroup(c)
     && (!hideDone || !isDone(c) || state.segment === "fixed")
     && (!query || c.search.includes(query)));
   const { key, dir } = state.sort;
@@ -674,7 +709,7 @@ function itemHtml(c) {
     <div class="c-id"><a href="${ADMIN_URL}${encodeURIComponent(c.id)}" target="_blank" rel="noopener" title="Відкрити товар в адмінці">${escape(c.id)}${LINK_ICON}</a></div>
     <div class="c-name">
       <div class="name">${productHtml(c)}</div>
-      ${meta ? `<div class="meta">${escape(meta)}</div>` : ""}
+      <div class="meta"><span class="tag">${GROUP_LABEL[c.parsed.group]}</span>${escape(meta)}</div>
     </div>
     <div class="c-vals">${valsHtml(c)}</div>
     <div class="c-edit">
@@ -772,6 +807,7 @@ function when(iso) {
 // moveOn — після рішення перейти до Кратності наступного товару.
 function updateItem(id, { moveOn = false } = {}) {
   renderKpis();
+  renderGroups();
   renderSegments();
   const old = $("items").querySelector(`[data-id="${CSS.escape(id)}"]`);
   if (!old) return;
@@ -805,6 +841,14 @@ $("colhead").addEventListener("click", (event) => {
   if (!button) return;
   const key = button.dataset.sort;
   state.sort = { key, dir: state.sort.key === key && state.sort.dir === "asc" ? "desc" : "asc" };
+  state.shown = PAGE;
+  render();
+});
+
+$("groups").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-group]");
+  if (!button) return;
+  state.group = button.dataset.group;
   state.shown = PAGE;
   render();
 });
@@ -951,17 +995,17 @@ function exportImport() {
 // Що, де й коли виправлено. Окремий аркуш — товари, залишені як є.
 function exportFixes() {
   const { at } = state;
-  const fixedHeader = ["ID товару", "Посилання в адмінці", "Назва товару DWH", "Статус перевірки",
+  const fixedHeader = ["ID товару", "Посилання в адмінці", "Назва товару DWH", "Група", "Статус перевірки",
     "Кількість у назві", "Було: Кратність", "Було: У блістері", "Було: Кількість",
     "Стало: Кратність", "Стало: У блістері", "Стало: Кількість", "Коли виправлено"];
-  const keptHeader = ["ID товару", "Посилання в адмінці", "Назва товару DWH", "Статус перевірки",
+  const keptHeader = ["ID товару", "Посилання в адмінці", "Назва товару DWH", "Група", "Статус перевірки",
     "Кількість у назві", "Кратність", "У блістері", "Кількість", "Коли перевірено"];
   const fixedRows = [];
   const keptRows = [];
   for (const [id, edit] of Object.entries(state.edits)) {
     const c = state.byId.get(id);
     if (!c) continue;
-    const head = [Number(id) || id, ADMIN_URL + id, productText(c), STATUS[c.base], c.parsed.quantity];
+    const head = [Number(id) || id, ADMIN_URL + id, productText(c), GROUP_LABEL[c.parsed.group], STATUS[c.base], c.parsed.quantity];
     const was = [c.row[at[MULTIPLE]], c.row[at[BLISTER]], c.row[at[QUANTITY]]];
     if (edit.keep) keptRows.push([...head, ...was, when(edit.at)]);
     else fixedRows.push([...head, ...was, edit.multiple, edit.blister, edit.multiple * edit.blister, when(edit.at)]);
@@ -980,7 +1024,7 @@ const productText = (c) => String(c.row[state.at[DWH_NAME]] ?? c.row[state.at[NA
 
 // Повний звіт за регламентом: зведення й аркуш на кожен розділ, що потребує уваги.
 function exportReport() {
-  const added = ["Посилання в адмінці", "Кількість у назві", "Правило", "Причина",
+  const added = ["Посилання в адмінці", "Група", "Кількість у назві", "Правило", "Причина",
     "Нова Кратність", "Нове У блістері", "Нова кількість", "Статус"];
   const book = XLSX.utils.book_new();
   const summary = [["Показник", "Кількість"], ["Товарів у вивантаженні", state.items.length]];
@@ -991,12 +1035,17 @@ function exportReport() {
     const rows = list.map((c) => {
       const edit = state.edits[c.id];
       const fixed = edit && !edit.keep ? [edit.multiple, edit.blister, edit.multiple * edit.blister] : [null, null, null];
-      return [...c.row, ADMIN_URL + c.id, c.parsed.quantity, c.parsed.rule, reasonText(c), ...fixed, STATUS[status(c)]];
+      return [...c.row, ADMIN_URL + c.id, GROUP_LABEL[c.parsed.group], c.parsed.quantity, c.parsed.rule, reasonText(c), ...fixed, STATUS[status(c)]];
     });
     return [title, sheet([...state.header, ...added], rows, state.header.length)];
   });
   summary.push(["Збігається", state.items.filter((c) => c.base === "ok").length],
     ["Не розпізнано, кількість 0 або 1", state.items.filter((c) => c.base === "none").length]);
+  summary.push([], ["Група", "Усього", "Розбіжності", "Інша структура", "Перевірити вручну", "Збігається"]);
+  for (const { key, label } of GROUPS.slice(1)) {
+    const list = state.items.filter((c) => c.parsed.group === key);
+    summary.push([label, list.length, ...["bad", "structure", "check", "ok"].map((b) => list.filter((c) => c.base === b).length)]);
+  }
   XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(summary), "Зведення");
   for (const [title, ws] of sheets) XLSX.utils.book_append_sheet(book, ws, title);
   XLSX.writeFile(book, `Невідповідність кількості в упаковці - Аптека 9-1-1 - ${today()}.xlsx`, { compression: true });
